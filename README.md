@@ -20,7 +20,7 @@ service repo                                  turfbook-workflows
 
 | Workflow | Jobs | Inputs | Secrets |
 |---|---|---|---|
-| `.github/workflows/python-ci.yml` | `pre-commit` ‖ `tests` (Postgres only when `postgres-db` is set; migrations, then `run-tests`) | `postgres-db` (empty = no Postgres), `ci-env` (non-secret `KEY=value` lines), `setup-script` (path in the service repo, run before the tests) | — |
+| `.github/workflows/python-ci.yml` | `pre-commit` ‖ `tests` (Postgres only when `postgres-db` is set, started in the background while the environment is prepared; migrations, then `run-tests`) | `postgres-db` (empty = no Postgres), `ci-env` (non-secret `KEY=value` lines), `setup-script` (path in the service repo, run before the tests) | — |
 | `.github/workflows/serverless-package.yml` | `package` on `ubuntu-24.04-arm`: `serverless package`, layer reused from the cache while `requirements/base.txt` does not change | `stage` (required), `setup-script` (run before packaging) | `SERVERLESS_ACCESS_KEY` (passed explicitly) |
 
 Example (a service with a database):

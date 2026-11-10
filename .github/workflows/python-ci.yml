@@ -46,28 +46,29 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    services:
-      postgres:
-        # An empty image does not start the service: no database, no Postgres.
-        # Pinned by digest (16-alpine); Dependabot does not update it, so bump it by hand.
-        image: ${{ inputs.postgres-db != '' && 'postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139' || '' }}
-        env:
-          POSTGRES_USER: turfbook
-          POSTGRES_PASSWORD: turfbook
-          POSTGRES_DB: ${{ inputs.postgres-db }}
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       # Full history: a pull request compares its files with the base commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      # Postgres starts in the background while the environment is prepared, instead of
+      # a service the job waits for before its first step. Only when the service has a
+      # database. Pinned by digest (16-alpine); Dependabot does not update it.
+      # The health check uses TCP: the image's first-start server listens only on the
+      # socket, so it is healthy only once the real server accepts connections.
+      - name: Start Postgres
+        if: inputs.postgres-db != ''
+        env:
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+          POSTGRES_IMAGE: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        run: |
+          nohup docker run --detach --name postgres --publish 5432:5432 \
+            --env POSTGRES_USER=turfbook --env POSTGRES_PASSWORD=turfbook \
+            --env POSTGRES_DB="$POSTGRES_DB" \
+            --health-cmd 'pg_isready -h 127.0.0.1 -U turfbook' --health-interval 1s \
+            "$POSTGRES_IMAGE" > "$RUNNER_TEMP/postgres.log" 2>&1 &
 
       - uses: Fabio244000/turfbook-workflows/.github/actions/setup-python-env@836fc4667b06a618a62120ba4a8db885169ce366 # main
 
@@ -88,6 +89,17 @@ jobs:
         env:
           SETUP_SCRIPT: ${{ inputs.setup-script }}
         run: bash "$SETUP_SCRIPT"
+
+      - name: Wait for Postgres
+        if: inputs.postgres-db != ''
+        run: |
+          for _ in $(seq 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' postgres 2>/dev/null || true)
+            if [ "$status" = healthy ]; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/postgres.log"
+          exit 1
 
       - name: Migrations
         if: inputs.postgres-db != ''
