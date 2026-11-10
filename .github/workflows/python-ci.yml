@@ -63,9 +63,11 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
+      # Full history: a pull request compares its files with the base commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: Fabio244000/turfbook-workflows/.github/actions/setup-python-env@836fc4667b06a618a62120ba4a8db885169ce366 # main
 
@@ -91,5 +93,4 @@ jobs:
         if: inputs.postgres-db != ''
         run: alembic upgrade head
 
-      - name: Tests
-        run: pytest
+      - uses: Fabio244000/turfbook-workflows/.github/actions/run-tests@ce3186728c568de1a3fc4ebdabedfa2a43af86cd # main

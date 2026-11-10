@@ -20,7 +20,7 @@ service repo                                  turfbook-workflows
 
 | Workflow | Jobs | Inputs | Secrets |
 |---|---|---|---|
-| `.github/workflows/python-ci.yml` | `pre-commit` ‖ `tests` (Postgres only when `postgres-db` is set; migrations, then `pytest`) | `postgres-db` (empty = no Postgres), `ci-env` (non-secret `KEY=value` lines), `setup-script` (path in the service repo, run before the tests) | — |
+| `.github/workflows/python-ci.yml` | `pre-commit` ‖ `tests` (Postgres only when `postgres-db` is set; migrations, then `run-tests`) | `postgres-db` (empty = no Postgres), `ci-env` (non-secret `KEY=value` lines), `setup-script` (path in the service repo, run before the tests) | — |
 | `.github/workflows/serverless-package.yml` | `package` on `ubuntu-24.04-arm`: `serverless package`, layer reused from the cache while `requirements/base.txt` does not change | `stage` (required), `setup-script` (run before packaging) | `SERVERLESS_ACCESS_KEY` (passed explicitly) |
 
 Example (a service with a database):
@@ -42,6 +42,7 @@ jobs:
 |---|---|---|
 | `.github/actions/setup-python-env` | Python 3.12 and `requirements/local.txt` in `~/venv`, cached by the Python version and the hash of `requirements/*.txt` (a hit skips `pip install`); optionally the mypy cache | `mypy-cache` (`'true'` / `'false'`, default `'false'`) |
 | `.github/actions/setup-serverless` | Node 22 and `npm ci` (Serverless pinned in the service's `package.json`) | — |
+| `.github/actions/run-tests` | Outside a pull request, the whole suite, saving testmon data. In a pull request, the affected tests (pytest-testmon, data of the base branch) plus every `tests/*/e2e` test; the whole suite when it changes `alembic/`, `requirements/`, `config/`, `deploy/`, `.github/`, `pyproject.toml`, `serverless.yml` or `package*.json`, or when there is no testmon data. The service needs `pytest-testmon` in `requirements/local.txt` | — |
 
 ## Checks before push
 
