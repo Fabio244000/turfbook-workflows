@@ -1,0 +1,55 @@
+name: Serverless package
+
+# Builds the package, the Lambda layer and the template on an arm64 runner (no QEMU),
+# reusing the built layer while requirements/base.txt does not change.
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: Serverless stage to package.
+        type: string
+        required: true
+      setup-script:
+        description: Optional script of the service, run before packaging.
+        type: string
+        default: ''
+    secrets:
+      SERVERLESS_ACCESS_KEY:
+        description: Serverless v4 requires it, also to package.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    concurrency:
+      group: package-${{ inputs.stage }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-serverless@836fc4667b06a618a62120ba4a8db885169ce366 # main
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/serverless-python-requirements
+          key: layer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('requirements/base.txt') }}
+
+      - name: Service setup
+        if: inputs.setup-script != ''
+        env:
+          SETUP_SCRIPT: ${{ inputs.setup-script }}
+        run: bash "$SETUP_SCRIPT"
+
+      - name: Package
+        env:
+          SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
+          STAGE: ${{ inputs.stage }}
+          MIGRATIONS_HASH: ${{ hashFiles('alembic/versions/**') }}
+        run: npx serverless package --stage "$STAGE" --param="migrationsHash=$MIGRATIONS_HASH"
+
+      - name: Artifact hashes
+        run: sha256sum .serverless/*.zip

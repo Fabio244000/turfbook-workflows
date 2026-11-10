@@ -4,6 +4,38 @@ Shared GitHub Actions for the TurfBook services: reusable workflows and composit
 A service calls them pinned to a full commit SHA; Dependabot in the service proposes the
 updates.
 
+## Map
+
+```
+service repo                                  turfbook-workflows
+.github/workflows/ci.yml      ──uses@SHA──►   workflows/python-ci.yml
+                                                ├─ pre-commit ──► actions/setup-python-env (mypy cache)
+                                                └─ tests ───────► actions/setup-python-env (+ Postgres if postgres-db)
+.github/workflows/deploy.yml  ──► ci.yml, then
+                              ──uses@SHA──►   workflows/serverless-package.yml (arm64)
+                                                └─ package ─────► actions/setup-serverless
+```
+
+## Reusable workflows
+
+| Workflow | Jobs | Inputs | Secrets |
+|---|---|---|---|
+| `.github/workflows/python-ci.yml` | `pre-commit` ‖ `tests` (Postgres only when `postgres-db` is set; migrations, then `pytest`) | `postgres-db` (empty = no Postgres), `ci-env` (non-secret `KEY=value` lines), `setup-script` (path in the service repo, run before the tests) | — |
+| `.github/workflows/serverless-package.yml` | `package` on `ubuntu-24.04-arm`: `serverless package`, layer reused from the cache while `requirements/base.txt` does not change | `stage` (required), `setup-script` (run before packaging) | `SERVERLESS_ACCESS_KEY` (passed explicitly) |
+
+Example (a service with a database):
+
+```yaml
+jobs:
+  ci:
+    uses: <owner>/turfbook-workflows/.github/workflows/python-ci.yml@<full SHA> # main
+    with:
+      postgres-db: identity
+      ci-env: |
+        ACCOUNTS_API_KEY=ci-accounts-api-key
+      setup-script: scripts/ci/session_token_key.sh
+```
+
 ## Composite actions
 
 | Action | What it does | Inputs |

@@ -1,0 +1,88 @@
+name: Python CI
+
+# pre-commit and the tests in parallel; the caller passes only its own data.
+on:
+  workflow_call:
+    inputs:
+      postgres-db:
+        description: Name of the CI Postgres database; empty for a service without one.
+        type: string
+        default: ''
+      ci-env:
+        description: Non-secret variables the service's Settings requires in CI, one KEY=value per line.
+        type: string
+        default: ''
+      setup-script:
+        description: Optional script of the service, run before the migrations and the tests.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-python-env@836fc4667b06a618a62120ba4a8db885169ce366 # main
+        with:
+          mypy-cache: 'true'
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Pre-commit hooks
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        # An empty image does not start the service: no database, no Postgres.
+        image: ${{ inputs.postgres-db != '' && 'postgres:16-alpine' || '' }}
+        env:
+          POSTGRES_USER: turfbook
+          POSTGRES_PASSWORD: turfbook
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-python-env@836fc4667b06a618a62120ba4a8db885169ce366 # main
+
+      - name: Service environment
+        env:
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+          CI_ENV: ${{ inputs.ci-env }}
+        run: |
+          if [ -n "$POSTGRES_DB" ]; then
+            echo "DATABASE_URL=postgresql+psycopg://turfbook:turfbook@localhost:5432/$POSTGRES_DB" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$CI_ENV" ]; then
+            printf '%s\n' "$CI_ENV" >> "$GITHUB_ENV"
+          fi
+
+      - name: Service setup
+        if: inputs.setup-script != ''
+        env:
+          SETUP_SCRIPT: ${{ inputs.setup-script }}
+        run: bash "$SETUP_SCRIPT"
+
+      - name: Migrations
+        if: inputs.postgres-db != ''
+        run: alembic upgrade head
+
+      - name: Tests
+        run: pytest
