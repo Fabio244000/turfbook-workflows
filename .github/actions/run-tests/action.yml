@@ -1,0 +1,29 @@
+name: Run the tests a change needs
+description: >-
+  Outside a pull request, the whole suite, recording testmon data for the base branch.
+  In a pull request, the affected tests plus every e2e test, or the whole suite when it
+  changes migrations, dependencies, configuration, deploy or workflows.
+
+runs:
+  using: composite
+  steps:
+    # The testmon data of the base branch (develop); a pull request only reads it.
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .testmondata
+        key: testmon-${{ runner.os }}-${{ github.sha }}
+        restore-keys: |
+          testmon-${{ runner.os }}-
+
+    - name: Tests
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: bash "$GITHUB_ACTION_PATH/run_tests.sh"
+
+    - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: github.event_name != 'pull_request'
+      with:
+        path: .testmondata
+        key: testmon-${{ runner.os }}-${{ github.sha }}
