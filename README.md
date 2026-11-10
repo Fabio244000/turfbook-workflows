@@ -42,3 +42,9 @@ jobs:
 |---|---|---|
 | `.github/actions/setup-python-env` | Python 3.12 and `requirements/local.txt` in `~/venv`, cached by the Python version and the hash of `requirements/*.txt` (a hit skips `pip install`); optionally the mypy cache | `mypy-cache` (`'true'` / `'false'`, default `'false'`) |
 | `.github/actions/setup-serverless` | Node 22 and `npm ci` (Serverless pinned in the service's `package.json`) | — |
+
+## Checks before push
+
+`pre-commit install` once; every commit runs actionlint and zizmor (`--persona=pedantic`,
+which also rejects broad permissions such as `write-all`). The Postgres image of
+`python-ci.yml` is pinned by digest and Dependabot does not update it: bump it by hand.

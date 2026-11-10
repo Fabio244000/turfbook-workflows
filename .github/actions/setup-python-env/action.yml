@@ -30,9 +30,10 @@ runs:
         python -m venv ~/venv
         ~/venv/bin/pip install -r requirements/local.txt
 
+    # A fixed path with no outside input: nothing an attacker controls reaches GITHUB_PATH.
     - name: Use the environment
       shell: bash
-      run: echo "$HOME/venv/bin" >> "$GITHUB_PATH"
+      run: echo "$HOME/venv/bin" >> "$GITHUB_PATH" # zizmor: ignore[github-env]
 
     # mypy only re-checks what changed since the last cached run.
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -22,10 +22,13 @@ permissions:
 
 jobs:
   pre-commit:
+    name: Pre-commit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: Fabio244000/turfbook-workflows/.github/actions/setup-python-env@836fc4667b06a618a62120ba4a8db885169ce366 # main
         with:
@@ -40,12 +43,14 @@ jobs:
         run: pre-commit run --all-files --show-diff-on-failure
 
   tests:
+    name: Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
         # An empty image does not start the service: no database, no Postgres.
-        image: ${{ inputs.postgres-db != '' && 'postgres:16-alpine' || '' }}
+        # Pinned by digest (16-alpine); Dependabot does not update it, so bump it by hand.
+        image: ${{ inputs.postgres-db != '' && 'postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139' || '' }}
         env:
           POSTGRES_USER: turfbook
           POSTGRES_PASSWORD: turfbook
@@ -59,6 +64,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: Fabio244000/turfbook-workflows/.github/actions/setup-python-env@836fc4667b06a618a62120ba4a8db885169ce366 # main
 
