@@ -1,0 +1,10 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/setup-python-env
+      - /.github/actions/setup-serverless
+    target-branch: main
+    schedule:
+      interval: weekly

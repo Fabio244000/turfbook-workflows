@@ -1,0 +1,44 @@
+name: Set up the Python environment
+description: >-
+  Python 3.12 and the environment of requirements/local.txt, installed once and reused
+  from the cache while the requirements do not change; optionally the mypy cache.
+
+inputs:
+  mypy-cache:
+    description: Restore and save the mypy cache (only the job that runs mypy).
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      id: python
+      with:
+        python-version: '3.12'
+
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      id: venv
+      with:
+        path: ~/venv
+        key: venv-${{ runner.os }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements/*.txt') }}
+
+    - name: Install dependencies
+      if: steps.venv.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        python -m venv ~/venv
+        ~/venv/bin/pip install -r requirements/local.txt
+
+    - name: Use the environment
+      shell: bash
+      run: echo "$HOME/venv/bin" >> "$GITHUB_PATH"
+
+    # mypy only re-checks what changed since the last cached run.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: inputs.mypy-cache == 'true'
+      with:
+        path: .mypy_cache
+        key: mypy-${{ runner.os }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements/*.txt') }}-${{ github.sha }}
+        restore-keys: |
+          mypy-${{ runner.os }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements/*.txt') }}-
