@@ -1,6 +1,7 @@
 name: Python CI
 
-# pre-commit and the tests in parallel; the caller passes only its own data.
+# Pre-commit, Tests and Audit in parallel (the required checks); Coverage outside a pull
+# request (inside the deploy). The caller passes only its own data.
 on:
   workflow_call:
     inputs:
@@ -16,6 +17,10 @@ on:
         description: Optional script of the service, run before the migrations and the tests.
         type: string
         default: ''
+      ref:
+        description: Commit to test; empty for the commit of the event (a redeploy passes an earlier one).
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -28,6 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - uses: Fabio244000/turfbook-workflows/.github/actions/setup-python-env@836fc4667b06a618a62120ba4a8db885169ce366 # main
@@ -50,59 +56,61 @@ jobs:
       # Full history: a pull request compares its files with the base commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
           fetch-depth: 0
 
-      # Postgres starts in the background while the environment is prepared, instead of
-      # a service the job waits for before its first step. Only when the service has a
-      # database. Pinned by digest (16-alpine); Dependabot does not update it.
-      # The health check uses TCP: the image's first-start server listens only on the
-      # socket, so it is healthy only once the real server accepts connections.
-      - name: Start Postgres
+      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-service@b2570ba18424ee888122012fc0c67136bacbae70 # main
+        with:
+          postgres-db: ${{ inputs.postgres-db }}
+          ci-env: ${{ inputs.ci-env }}
+          setup-script: ${{ inputs.setup-script }}
+
+      # A model change without its revision fails.
+      - name: Migrations match the models
         if: inputs.postgres-db != ''
-        env:
-          POSTGRES_DB: ${{ inputs.postgres-db }}
-          POSTGRES_IMAGE: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
-        run: |
-          nohup docker run --detach --name postgres --publish 5432:5432 \
-            --env POSTGRES_USER=turfbook --env POSTGRES_PASSWORD=turfbook \
-            --env POSTGRES_DB="$POSTGRES_DB" \
-            --health-cmd 'pg_isready -h 127.0.0.1 -U turfbook' --health-interval 1s \
-            "$POSTGRES_IMAGE" > "$RUNNER_TEMP/postgres.log" 2>&1 &
-
-      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-python-env@836fc4667b06a618a62120ba4a8db885169ce366 # main
-
-      - name: Service environment
-        env:
-          POSTGRES_DB: ${{ inputs.postgres-db }}
-          CI_ENV: ${{ inputs.ci-env }}
-        run: |
-          if [ -n "$POSTGRES_DB" ]; then
-            echo "DATABASE_URL=postgresql+psycopg://turfbook:turfbook@localhost:5432/$POSTGRES_DB" >> "$GITHUB_ENV"
-          fi
-          if [ -n "$CI_ENV" ]; then
-            printf '%s\n' "$CI_ENV" >> "$GITHUB_ENV"
-          fi
-
-      - name: Service setup
-        if: inputs.setup-script != ''
-        env:
-          SETUP_SCRIPT: ${{ inputs.setup-script }}
-        run: bash "$SETUP_SCRIPT"
-
-      - name: Wait for Postgres
-        if: inputs.postgres-db != ''
-        run: |
-          for _ in $(seq 60); do
-            status=$(docker inspect --format '{{.State.Health.Status}}' postgres 2>/dev/null || true)
-            if [ "$status" = healthy ]; then exit 0; fi
-            sleep 1
-          done
-          cat "$RUNNER_TEMP/postgres.log"
-          exit 1
-
-      - name: Migrations
-        if: inputs.postgres-db != ''
-        run: alembic upgrade head
+        run: alembic check
 
       - uses: Fabio244000/turfbook-workflows/.github/actions/run-tests@ce3186728c568de1a3fc4ebdabedfa2a43af86cd # main
+
+  # Outside a pull request only: testmon stops recording under coverage, so the whole
+  # suite with coverage runs in its own job, in parallel with Tests.
+  coverage:
+    name: Coverage
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-service@b2570ba18424ee888122012fc0c67136bacbae70 # main
+        with:
+          postgres-db: ${{ inputs.postgres-db }}
+          ci-env: ${{ inputs.ci-env }}
+          setup-script: ${{ inputs.setup-script }}
+
+      - name: Whole suite with coverage of at least 90%
+        run: pytest --cov=app --cov-fail-under=90
+
+  # A known vulnerability in a runtime dependency fails CI.
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Audit runtime dependencies
+        run: |
+          pip install pip-audit==2.10.1
+          pip-audit -r requirements/base.txt

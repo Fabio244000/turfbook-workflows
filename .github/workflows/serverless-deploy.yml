@@ -1,0 +1,93 @@
+name: Serverless deploy
+
+# The whole deploy of a service: verify, provision, record the database revision, deploy
+# and, if it fails, roll back (ticket-manager/conventions/platform.md, §8). On an arm64
+# runner (no QEMU), reusing the built layer while requirements/base.txt does not change.
+# The caller runs its CI first (needs: ci).
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: Serverless stage; also the GitHub Environment of the deploy.
+        type: string
+        required: true
+      service:
+        description: Service name (stack turfbook-<service>-<stage>).
+        type: string
+        required: true
+      db-secret:
+        description: Secret of the service database (turfbook/<service>/<stage>/db); empty for a service without one.
+        type: string
+        default: ''
+      verify-script:
+        description: Optional script of the service that checks its own deploy requirements (ticket §8).
+        type: string
+        default: ''
+      setup-script:
+        description: Optional script of the service, run before deploying.
+        type: string
+        default: ''
+      ref:
+        description: Commit to deploy; empty for the commit of the event. A redeploy passes an earlier one.
+        type: string
+        default: ''
+    secrets:
+      SERVERLESS_ACCESS_KEY:
+        description: Serverless v4 requires it.
+        required: true
+      AWS_DEPLOY_ROLE_ARN:
+        description: Deploy role assumed through OIDC.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    environment: ${{ inputs.stage }}
+    permissions:
+      contents: read
+      id-token: write # OIDC: assume the deploy role, no long-lived AWS keys
+    # Deploys queue, never cancel: CloudFormation cannot update a stack twice at once.
+    concurrency:
+      group: deploy-${{ inputs.stage }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          fetch-depth: 0 # a redeploy checks that the commit belongs to develop
+
+      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-serverless@836fc4667b06a618a62120ba4a8db885169ce366 # main
+
+      # A fresh layer build is never byte-identical: reuse the built one while
+      # requirements/base.txt does not change, so the layer is not republished.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/serverless-python-requirements
+          key: layer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('requirements/base.txt') }}
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Service setup
+        if: inputs.setup-script != ''
+        env:
+          SETUP_SCRIPT: ${{ inputs.setup-script }}
+        run: bash "$SETUP_SCRIPT"
+
+      - uses: Fabio244000/turfbook-workflows/.github/actions/serverless-deploy@b2570ba18424ee888122012fc0c67136bacbae70 # main
+        with:
+          stage: ${{ inputs.stage }}
+          service: ${{ inputs.service }}
+          db-secret: ${{ inputs.db-secret }}
+          verify-script: ${{ inputs.verify-script }}
+          redeploy: ${{ inputs.ref != '' }}
+          migrations-hash: ${{ hashFiles('alembic/versions/**') }}
+          serverless-access-key: ${{ secrets.SERVERLESS_ACCESS_KEY }}
