@@ -1,0 +1,7 @@
+# Editors
+.idea/
+.vscode/
+
+# Python (scripts of the actions, pre-commit)
+__pycache__/
+*.py[cod]

@@ -1,0 +1,49 @@
+name: Deploy with Serverless (verify, change, roll back)
+description: >-
+  Verifies the deploy's requirements before changing anything, provisions the service
+  database once, records its revision, deploys with CloudFormation's automatic rollback
+  disabled and, if the deploy fails, rolls everything back: the database to its previous
+  revision (base on a first deploy) with the new code's migrate Lambda, then the stack
+  (ticket-manager/conventions/platform.md, §8). Needs AWS credentials and npm ci done.
+
+inputs:
+  stage:
+    description: Serverless stage.
+    required: true
+  service:
+    description: Service name (turfbook-<service>-<stage> is the stack).
+    required: true
+  db-secret:
+    description: Secret of the service database (turfbook/<service>/<stage>/db); empty for a service without one.
+    required: false
+    default: ''
+  verify-script:
+    description: Optional script of the service that checks its own deploy requirements (ticket §8).
+    required: false
+    default: ''
+  redeploy:
+    description: "'true' to redeploy an earlier commit: only if its migrations end at the deployed revision."
+    required: false
+    default: 'false'
+  migrations-hash:
+    description: Hash of alembic/versions/ (empty for a service without migrations).
+    required: false
+    default: ''
+  serverless-access-key:
+    description: Serverless v4 access key.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Deploy
+      shell: bash
+      env:
+        STAGE: ${{ inputs.stage }}
+        SERVICE: ${{ inputs.service }}
+        DB_SECRET_NAME: ${{ inputs.db-secret }}
+        VERIFY_SCRIPT: ${{ inputs.verify-script }}
+        REDEPLOY: ${{ inputs.redeploy }}
+        MIGRATIONS_HASH: ${{ inputs.migrations-hash }}
+        SERVERLESS_ACCESS_KEY: ${{ inputs.serverless-access-key }}
+      run: bash "$GITHUB_ACTION_PATH/deploy.sh"
