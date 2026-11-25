@@ -75,7 +75,14 @@ runs:
         cat "$RUNNER_TEMP/postgres.log"
         exit 1
 
+    # A repo with Postgres but without Alembic (turfbook-platform: its tests need a
+    # server, it has no migrations of its own) skips them.
     - name: Migrations
       if: inputs.postgres-db != ''
       shell: bash
-      run: alembic upgrade head
+      run: |
+        if [ -f alembic.ini ]; then
+          alembic upgrade head
+        else
+          echo 'No alembic.ini: no migrations to apply.'
+        fi
