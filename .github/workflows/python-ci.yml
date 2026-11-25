@@ -114,3 +114,10 @@ jobs:
         run: |
           pip install pip-audit==2.10.1
           pip-audit -r requirements/base.txt
+
+      # The deploy tooling (Serverless, package-lock.json): it never reaches the Lambdas,
+      # so only high and critical fail; Dependabot proposes the rest. npm comes with the
+      # runner and audits the lock file without installing anything.
+      - name: Audit deploy tooling
+        if: hashFiles('package-lock.json') != ''
+        run: npm audit --audit-level=high
