@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Deploy: verify, change, roll back. A failed deploy leaves nothing behind.
 #   1. Verify the requirements; something missing -> fail, nothing changed.
-#   2. Provision the service database once (the shared db-provisioner).
+#   2. Provision the service database once (the shared db-provisioner). If it fails,
+#      drop whatever it created: nothing is left.
 #   3. Record the database revision (migrate Lambda, action "current").
 #   4. serverless deploy. The rollback is decided per deploy: disabled only when the
 #      deploy brings new migrations (the commit's head is not the recorded revision),
@@ -77,7 +78,17 @@ if [ -n "$DB_SECRET_NAME" ]; then
   if [ "$(bash "$here/provision_database.sh" is-provisioned)" != true ]; then
     db_created_now=true
   fi
-  bash "$here/provision_database.sh"
+  if ! bash "$here/provision_database.sh"; then
+    if [ "$db_created_now" = true ]; then
+      echo '::error::Provisioning failed: dropping whatever it created.'
+      if ! bash "$here/provision_database.sh" drop; then
+        echo "::error::Dropping it failed too. Fabio: check the database and its user, and set $DB_PROVISIONED_PARAM to false once they are gone."
+        exit 1
+      fi
+      echo 'Provisioning undone: neither the database nor its user is left.'
+    fi
+    exit 1
+  fi
 fi
 
 # 3. Record the revision (a first deploy has no migrate Lambda yet: nothing to record).
