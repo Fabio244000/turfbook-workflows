@@ -3,11 +3,16 @@
 #   1. Verify the requirements; something missing -> fail, nothing changed.
 #   2. Provision the service database once (db-provisioner of turfbook-platform).
 #   3. Record the database revision (migrate Lambda, action "current").
-#   4. serverless deploy with CloudFormation's automatic rollback disabled
-#      (disableRollback in the service's serverless.yml).
-#   5. The deploy failed: undo the migrations with the new code's migrate Lambda, the
-#      only one with the migration files, then roll back the stack (delete it on a first
-#      deploy). If the undo fails, stop without touching the stack and report it.
+#   4. serverless deploy. The rollback is decided per deploy: disabled only when the
+#      deploy brings new migrations (the commit's head is not the recorded revision),
+#      CloudFormation's automatic one otherwise (--param disableRollback, read by the
+#      service's serverless.yml). CloudFormation refuses to replace a resource with the
+#      rollback disabled (the layer, whenever requirements/base.txt changes).
+#   5. The deploy failed. Automatic rollback: CloudFormation already undid it (a first
+#      deploy's stack is deleted). Rollback disabled: undo the migrations with the new
+#      code's migrate Lambda, the only one with the migration files, then roll back the
+#      stack (delete it on a first deploy). If the undo fails, stop without touching the
+#      stack and report it.
 #
 # Required env: STAGE, SERVICE, SERVERLESS_ACCESS_KEY. Optional: DB_SECRET_NAME (empty:
 # no database), VERIFY_SCRIPT, REDEPLOY ('true'), MIGRATIONS_HASH (empty: not passed).
@@ -89,13 +94,19 @@ if [ "$REDEPLOY" = true ] && [ -n "$DB_SECRET_NAME" ]; then
   fi
 fi
 
-# 4. Change.
+# 4. Change. Only new migrations need the rollback disabled (step 5 undoes them first).
+new_migrations=false
+if [ -n "$DB_SECRET_NAME" ] && ! python3 "$here/check_head.py" alembic/versions "$recorded" > /dev/null; then
+  new_migrations=true
+fi
+echo "New migrations: $new_migrations (CloudFormation rollback disabled: $new_migrations)."
+
 # --force: Serverless compares with the last package it uploaded, which after a rollback
 # is the failed one, and would skip ("No changes to deploy") while the stack stays on the
 # old version. CloudFormation compares with the real stack: no change, no update.
 # migrationsHash only when there is one: Serverless rejects an empty --param while
 # resolving any ${param:...}, and without it the template falls back to sls:instanceId.
-params=()
+params=(--param="disableRollback=$new_migrations")
 if [ -n "$MIGRATIONS_HASH" ]; then
   params+=(--param="migrationsHash=$MIGRATIONS_HASH")
 fi
@@ -105,7 +116,36 @@ fi
 
 # 5. Roll back, once CloudFormation has finished.
 after="$(settled_stack_status)"
+
+# A replacement refused because the rollback was disabled: the deploy mixes new
+# migrations with a change that replaces a resource.
+split_hint() {
+  if aws cloudformation describe-stack-events --stack-name "$STACK_NAME" \
+    --query 'StackEvents[].ResourceStatusReason' --output text 2>/dev/null \
+    | grep -q 'Replacement type updates not supported'; then
+    echo '::error::The deploy brings new migrations and replaces a resource (e.g. the layer, from a dependency change): deploy the replacing change first in its own pull request, then the migrations.'
+  fi
+}
+
+if [ "$new_migrations" = false ]; then
+  case "$after" in
+    ROLLBACK_COMPLETE)
+      aws cloudformation delete-stack --stack-name "$STACK_NAME"
+      aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+      echo '::error::First deploy failed: CloudFormation rolled it back and the stack is deleted.'
+      ;;
+    NONE | UPDATE_ROLLBACK_COMPLETE | "$before")
+      echo "::error::Deploy failed: CloudFormation rolled it back (stack $after), the stack is as it was."
+      ;;
+    *)
+      echo "::error::Deploy failed and the stack is $after: Fabio, check it in the console."
+      ;;
+  esac
+  exit 1
+fi
+
 echo "::error::Deploy failed (stack $after): rolling back."
+split_hint
 
 if [ "$first_deploy" = true ]; then
   if [ -n "$DB_SECRET_NAME" ] && aws lambda get-function --function-name "$MIGRATE_FUNCTION" > /dev/null 2>&1; then
