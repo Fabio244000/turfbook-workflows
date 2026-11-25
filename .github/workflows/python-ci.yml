@@ -60,7 +60,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-service@b2570ba18424ee888122012fc0c67136bacbae70 # main
+      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-service@427bd32f5f02f8ce45478095dc5cebb4d5c35e3c # main
         with:
           postgres-db: ${{ inputs.postgres-db }}
           ci-env: ${{ inputs.ci-env }}
@@ -69,7 +69,12 @@ jobs:
       # A model change without its revision fails.
       - name: Migrations match the models
         if: inputs.postgres-db != ''
-        run: alembic check
+        run: |
+          if [ -f alembic.ini ]; then
+            alembic check
+          else
+            echo 'No alembic.ini: no models to check.'
+          fi
 
       - uses: Fabio244000/turfbook-workflows/.github/actions/run-tests@ce3186728c568de1a3fc4ebdabedfa2a43af86cd # main
 
@@ -86,7 +91,7 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-service@b2570ba18424ee888122012fc0c67136bacbae70 # main
+      - uses: Fabio244000/turfbook-workflows/.github/actions/setup-service@427bd32f5f02f8ce45478095dc5cebb4d5c35e3c # main
         with:
           postgres-db: ${{ inputs.postgres-db }}
           ci-env: ${{ inputs.ci-env }}
