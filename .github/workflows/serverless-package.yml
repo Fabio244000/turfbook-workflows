@@ -52,7 +52,13 @@ jobs:
           SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
           STAGE: ${{ inputs.stage }}
           MIGRATIONS_HASH: ${{ hashFiles('alembic/versions/**') }}
-        run: npx serverless package --stage "$STAGE" --param="migrationsHash=$MIGRATIONS_HASH"
+        # migrationsHash only when there is one: Serverless rejects an empty --param.
+        run: |
+          params=()
+          if [ -n "$MIGRATIONS_HASH" ]; then
+            params+=(--param="migrationsHash=$MIGRATIONS_HASH")
+          fi
+          npx serverless package --stage "$STAGE" "${params[@]}"
 
       - name: Artifact hashes
         run: sha256sum .serverless/*.zip
