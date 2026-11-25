@@ -10,7 +10,7 @@
 #      deploy). If the undo fails, stop without touching the stack and report it.
 #
 # Required env: STAGE, SERVICE, SERVERLESS_ACCESS_KEY. Optional: DB_SECRET_NAME (empty:
-# no database), VERIFY_SCRIPT, REDEPLOY ('true'), MIGRATIONS_HASH.
+# no database), VERIFY_SCRIPT, REDEPLOY ('true'), MIGRATIONS_HASH (empty: not passed).
 # Needs AWS credentials and npm ci done. Works the same from a developer machine.
 set -euo pipefail
 
@@ -93,7 +93,13 @@ fi
 # --force: Serverless compares with the last package it uploaded, which after a rollback
 # is the failed one, and would skip ("No changes to deploy") while the stack stays on the
 # old version. CloudFormation compares with the real stack: no change, no update.
-if npx serverless deploy --stage "$STAGE" --param="migrationsHash=$MIGRATIONS_HASH" --force; then
+# migrationsHash only when there is one: Serverless rejects an empty --param while
+# resolving any ${param:...}, and without it the template falls back to sls:instanceId.
+params=()
+if [ -n "$MIGRATIONS_HASH" ]; then
+  params+=(--param="migrationsHash=$MIGRATIONS_HASH")
+fi
+if npx serverless deploy --stage "$STAGE" "${params[@]}" --force; then
   exit 0
 fi
 
