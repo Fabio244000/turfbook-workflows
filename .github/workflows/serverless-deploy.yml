@@ -82,7 +82,7 @@ jobs:
           SETUP_SCRIPT: ${{ inputs.setup-script }}
         run: bash "$SETUP_SCRIPT"
 
-      - uses: Fabio244000/turfbook-workflows/.github/actions/serverless-deploy@b2570ba18424ee888122012fc0c67136bacbae70 # main
+      - uses: Fabio244000/turfbook-workflows/.github/actions/serverless-deploy@24ff0ccf23031d29f0e346dcf3c034c6fae0c82a # main
         with:
           stage: ${{ inputs.stage }}
           service: ${{ inputs.service }}
