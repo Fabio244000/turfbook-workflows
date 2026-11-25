@@ -75,8 +75,8 @@ runs:
         cat "$RUNNER_TEMP/postgres.log"
         exit 1
 
-    # A repo with Postgres but without Alembic (turfbook-platform: its tests need a
-    # server, it has no migrations of its own) skips them.
+    # A repo with Postgres but without Alembic (its tests need a server; it has no
+    # migrations) skips them.
     - name: Migrations
       if: inputs.postgres-db != ''
       shell: bash

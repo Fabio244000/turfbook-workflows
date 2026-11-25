@@ -1,7 +1,7 @@
 name: Serverless deploy
 
 # The whole deploy of a service: verify, provision, record the database revision, deploy
-# and, if it fails, roll back (ticket-manager/conventions/platform.md, §8). On an arm64
+# and, if it fails, roll back. On an arm64
 # runner (no QEMU), reusing the built layer while requirements/base.txt does not change.
 # The caller runs its CI first (needs: ci).
 on:

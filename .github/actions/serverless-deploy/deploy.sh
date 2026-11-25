@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Deploy: verify, change, roll back (ticket-manager/conventions/platform.md, §8).
+# Deploy: verify, change, roll back. A failed deploy leaves nothing behind.
 #   1. Verify the requirements; something missing -> fail, nothing changed.
-#   2. Provision the service database once (db-provisioner of turfbook-platform).
+#   2. Provision the service database once (the shared db-provisioner).
 #   3. Record the database revision (migrate Lambda, action "current").
 #   4. serverless deploy. The rollback is decided per deploy: disabled only when the
 #      deploy brings new migrations (the commit's head is not the recorded revision),
 #      CloudFormation's automatic one otherwise (--param disableRollback, read by the
 #      service's serverless.yml). CloudFormation refuses to replace a resource with the
 #      rollback disabled (the layer, whenever requirements/base.txt changes).
-#   5. The deploy failed. Automatic rollback: CloudFormation already undid it (a first
-#      deploy's stack is deleted). Rollback disabled: undo the migrations with the new
-#      code's migrate Lambda, the only one with the migration files, then roll back the
-#      stack (delete it on a first deploy). If the undo fails, stop without touching the
-#      stack and report it.
+#   5. The deploy failed. Automatic rollback: CloudFormation already undid it. Rollback
+#      disabled: undo the migrations with the new code's migrate Lambda, the only one
+#      with the migration files, then roll back the stack. If the undo fails, stop
+#      without touching the stack and report it.
+#      A first deploy is undone as if it never happened: delete the stack, then drop the
+#      database and its user if this deploy created them. A database that existed
+#      before this deploy may hold data: it is never dropped.
 #
 # Required env: STAGE, SERVICE, SERVERLESS_ACCESS_KEY. Optional: DB_SECRET_NAME (empty:
 # no database), VERIFY_SCRIPT, REDEPLOY ('true'), MIGRATIONS_HASH (empty: not passed).
@@ -70,7 +72,11 @@ first_deploy=false
 if [ "$before" = NONE ]; then first_deploy=true; fi
 
 # 2. Provision the database once.
+db_created_now=false
 if [ -n "$DB_SECRET_NAME" ]; then
+  if [ "$(bash "$here/provision_database.sh" is-provisioned)" != true ]; then
+    db_created_now=true
+  fi
   bash "$here/provision_database.sh"
 fi
 
@@ -127,13 +133,39 @@ split_hint() {
   fi
 }
 
+undo_first_deploy() {
+  if [ -n "$DB_SECRET_NAME" ] && [ "$db_created_now" = false ] && [ "$new_migrations" = true ] \
+    && aws lambda get-function --function-name "$MIGRATE_FUNCTION" > /dev/null 2>&1; then
+    if ! bash "$here/migrate.sh" downgrade base > /dev/null; then
+      echo "::error::Undoing the migrations failed: the stack is kept for Fabio to check the database."
+      exit 1
+    fi
+    echo 'Migrations undone: the database is at base.'
+  fi
+  if [ "$after" != NONE ]; then
+    aws cloudformation delete-stack --stack-name "$STACK_NAME"
+    aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+  fi
+  if [ "$db_created_now" = true ]; then
+    if ! bash "$here/provision_database.sh" drop; then
+      echo "::error::The stack is deleted, but dropping the database failed. Fabio: check the database and its user, and set $DB_PROVISIONED_PARAM to false once they are gone."
+      exit 1
+    fi
+    echo 'First deploy undone: the stack, the database and its user are deleted.'
+  elif [ -n "$DB_SECRET_NAME" ]; then
+    echo 'First deploy undone: the stack is deleted; the database existed before this deploy and is kept.'
+  else
+    echo 'First deploy undone: the stack is deleted.'
+  fi
+  exit 1
+}
+
 if [ "$new_migrations" = false ]; then
+  if [ "$first_deploy" = true ]; then
+    echo "::error::First deploy failed (stack $after): undoing it."
+    undo_first_deploy
+  fi
   case "$after" in
-    ROLLBACK_COMPLETE)
-      aws cloudformation delete-stack --stack-name "$STACK_NAME"
-      aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
-      echo '::error::First deploy failed: CloudFormation rolled it back and the stack is deleted.'
-      ;;
     NONE | UPDATE_ROLLBACK_COMPLETE | "$before")
       echo "::error::Deploy failed: CloudFormation rolled it back (stack $after), the stack is as it was."
       ;;
@@ -148,19 +180,7 @@ echo "::error::Deploy failed (stack $after): rolling back."
 split_hint
 
 if [ "$first_deploy" = true ]; then
-  if [ -n "$DB_SECRET_NAME" ] && aws lambda get-function --function-name "$MIGRATE_FUNCTION" > /dev/null 2>&1; then
-    if ! bash "$here/migrate.sh" downgrade base > /dev/null; then
-      echo "::error::Undoing the migrations failed: the stack is kept for Fabio to check the database."
-      exit 1
-    fi
-    echo 'Migrations undone: the database is at base.'
-  fi
-  if [ "$after" != NONE ]; then
-    aws cloudformation delete-stack --stack-name "$STACK_NAME"
-    aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
-  fi
-  echo 'First deploy rolled back: the stack is deleted and the database is empty.'
-  exit 1
+  undo_first_deploy
 fi
 
 if [ "$after" = "$before" ]; then

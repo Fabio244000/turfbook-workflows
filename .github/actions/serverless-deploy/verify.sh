@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Verifies the deploy's requirements before anything changes
-# (ticket-manager/conventions/platform.md, §8). A service with a database: the RDS
-# instance is available, its secret exists and the db-provisioner is deployed. Then the
-# service's own checks (VERIFY_SCRIPT, the requirements of its ticket's §8).
+# Verifies the deploy's requirements before anything changes. A service with a
+# database: the RDS instance is available, its secret exists and the db-provisioner is
+# deployed. Then the service's own checks (VERIFY_SCRIPT).
 #
 # Env: STAGE; optional DB_SECRET_NAME, DB_PROVISIONER_FUNCTION, VERIFY_SCRIPT.
 set -euo pipefail
