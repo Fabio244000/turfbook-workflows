@@ -90,7 +90,10 @@ if [ "$REDEPLOY" = true ] && [ -n "$DB_SECRET_NAME" ]; then
 fi
 
 # 4. Change.
-if npx serverless deploy --stage "$STAGE" --param="migrationsHash=$MIGRATIONS_HASH"; then
+# --force: Serverless compares with the last package it uploaded, which after a rollback
+# is the failed one, and would skip ("No changes to deploy") while the stack stays on the
+# old version. CloudFormation compares with the real stack: no change, no update.
+if npx serverless deploy --stage "$STAGE" --param="migrationsHash=$MIGRATIONS_HASH" --force; then
   exit 0
 fi
 
