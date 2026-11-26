@@ -3,7 +3,9 @@
 #   1. Verify the requirements; something missing -> fail, nothing changed.
 #   2. Provision the service database once (the shared db-provisioner). If it fails,
 #      drop whatever it created: nothing is left.
-#   3. Record the database revision (migrate Lambda, action "current").
+#   3. Record the database revision (migrate Lambda, action "current"). A migrate that
+#      predates the direct actions cannot answer: its first deploy with them has no
+#      recorded revision, so it keeps CloudFormation's automatic rollback.
 #   4. serverless deploy. The rollback is decided per deploy: disabled only when the
 #      deploy brings new migrations (the commit's head is not the recorded revision),
 #      CloudFormation's automatic one otherwise (--param disableRollback, read by the
@@ -93,15 +95,31 @@ fi
 
 # 3. Record the revision (a first deploy has no migrate Lambda yet: nothing to record).
 recorded=''
+legacy_migrate=false
 if [ -n "$DB_SECRET_NAME" ] && [ "$first_deploy" = false ]; then
-  recorded="$(bash "$here/migrate.sh" current)"
-  echo "Database revision before the deploy: ${recorded:-base}"
+  migrate_error="$(mktemp)"
+  if recorded="$(bash "$here/migrate.sh" current 2> "$migrate_error")"; then
+    echo "Database revision before the deploy: ${recorded:-base}"
+  elif grep -q ResponseURL "$migrate_error"; then
+    # Only a custom-resource handler reads ResponseURL: the old migrate.
+    legacy_migrate=true
+    recorded=''
+    echo '::warning::The deployed migrate predates the direct actions: the database revision is unknown. This deploy keeps CloudFormation'"'"'s automatic rollback and must bring no new migrations.'
+  else
+    cat "$migrate_error" >&2
+    exit 1
+  fi
+  rm -f "$migrate_error"
 fi
 
 # Redeploy of an earlier commit: it belongs to develop, and its migrations end at the
 # deployed revision (the old code cannot run on a newer schema).
 if [ "$REDEPLOY" = true ] && ! git merge-base --is-ancestor HEAD origin/develop; then
   echo "::error::The commit to redeploy is not on develop (no changes made)."
+  exit 1
+fi
+if [ "$REDEPLOY" = true ] && [ "$legacy_migrate" = true ]; then
+  echo "::error::A redeploy needs the database revision, and the deployed migrate cannot give it: deploy develop first (no changes made)."
   exit 1
 fi
 if [ "$REDEPLOY" = true ] && [ -n "$DB_SECRET_NAME" ]; then
@@ -113,7 +131,8 @@ fi
 
 # 4. Change. Only new migrations need the rollback disabled (step 5 undoes them first).
 new_migrations=false
-if [ -n "$DB_SECRET_NAME" ] && ! python3 "$here/check_head.py" alembic/versions "$recorded" > /dev/null; then
+if [ -n "$DB_SECRET_NAME" ] && [ "$legacy_migrate" = false ] \
+  && ! python3 "$here/check_head.py" alembic/versions "$recorded" > /dev/null; then
   new_migrations=true
 fi
 echo "New migrations: $new_migrations (CloudFormation rollback disabled: $new_migrations)."
